@@ -1,0 +1,143 @@
+---
+title: "Prem24/25"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-06-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading Libraries and Data
+```{r}
+library('tidyverse')
+library('dplyr')
+library("tidymodels")
+library('tidylog')
+library("dplyr")
+library("yardstick")
+library("rsample")
+library("stringr")
+library("recipes")
+library("kknn")
+library("zoo")
+
+prem_ou24 <- read.csv("C:/Users/tobyr/OneDrive/Desktop/Footy Analy/Prem/premier_stats24-25.csv")
+```
+
+# Selecting Relevant Columns
+```{r}
+# 2024-25 Season Cleaned
+prem_ou24.1 <- prem_ou24 %>% select(date_GMT, attendance, home_team_name, away_team_name, referee, Game.Week, 
+                                 home_ppg, away_ppg, home_team_goal_count, away_team_goal_count, total_goal_count, total_goals_at_half_time, home_team_goal_count_half_time, away_team_goal_count_half_time, home_team_corner_count, away_team_corner_count, home_team_yellow_cards, away_team_yellow_cards, home_team_shots, home_team_shots_on_target, away_team_shots_on_target, away_team_shots, home_team_fouls, away_team_fouls, home_team_possession, away_team_possession, Home.Team.Pre.Match.xG, Away.Team.Pre.Match.xG, team_a_xg, team_b_xg, average_goals_per_match_pre_match, average_corners_per_match_pre_match, average_cards_per_match_pre_match, odds_ft_home_team_win, odds_ft_draw, odds_ft_away_team_win, odds_ft_over25, odds_ft_over35)
+```
+
+# Calculating Running Average of Metrics for Each Team
+```{r}
+# Define the function
+calculate_avg <- function(data, team_column, stat_column, new_column) {
+  data %>%
+    group_by_at(team_column) %>%
+    mutate(!!new_column := rollapplyr(!!sym(stat_column), width = seq_along(!!sym(stat_column)), FUN = mean, fill = NA, align = "right")) %>%
+    ungroup()
+}
+
+# Apply function to data
+prem_ou24.1 <- calculate_avg(prem_ou24.1, "home_team_name", "home_team_shots", "HT_avgShots")
+prem_ou24.1 <- calculate_avg(prem_ou24.1, "away_team_name", "away_team_shots", "AT_avgShots")
+prem_ou24.1 <- calculate_avg(prem_ou24.1, "home_team_name", "home_team_shots_on_target", "HT_avgTarget")
+prem_ou24.1 <- calculate_avg(prem_ou24.1, "away_team_name", "away_team_shots_on_target", "AT_avgTarget")
+prem_ou24.1 <- calculate_avg(prem_ou24.1, "home_team_name", "home_team_possession", "HT_Possess")
+prem_ou24.1 <- calculate_avg(prem_ou24.1, "away_team_name", "away_team_possession", "AT_Possess")
+```
+
+# Adding the Target Variable (Two or More Goals, Three or More Goals, etc...)
+```{r}
+prem_ou24.1 <- prem_ou24.1 %>% mutate(TwoOrMore = ifelse(total_goal_count >= 2, 1, 0))
+prem_ou24.1$TwoOrMore <- as.factor(prem_ou24.1$TwoOrMore)
+prem_ou24.1 <- prem_ou24.1 %>% mutate(ThreeOrMore = ifelse(total_goal_count >= 3, 1, 0))
+prem_ou24.1$ThreeOrMore <- as.factor(prem_ou24.1$ThreeOrMore)
+prem_ou24.1 <- prem_ou24.1 %>% mutate(FourOrMore = ifelse(total_goal_count >= 4, 1, 0))
+prem_ou24.1$FourOrMore <- as.factor(prem_ou24.1$FourOrMore)
+```
+
+# Adding the Odds of the Under (Based on the Over Provided in Data)
+```{r}
+# THIS IS NOT USED TO CALCULATE PROFIT!
+
+# Adding Odds of Under (Used for quick analysis not the actual profit/loss)
+prem_ou24.1 <- prem_ou24.1 %>% mutate(PercentOver35 = 1 / odds_ft_over35)
+prem_ou24.1 <- prem_ou24.1 %>% mutate(PercentUnder35 = 1 - PercentOver35)
+prem_ou24.1 <- prem_ou24.1 %>% mutate(OddsUnder35 = 1 / PercentUnder35)
+prem_ou24.1 <- prem_ou24.1 %>% mutate(PercentOver25 = 1 / odds_ft_over25)
+prem_ou24.1 <- prem_ou24.1 %>% mutate(PercentUnder25 = 1 - PercentOver25)
+prem_ou24.1 <- prem_ou24.1 %>% mutate(OddsUnder25 = 1 / PercentUnder25)
+```
+
+# Creating the Model Recipes
+```{r}
+# Premier League 2024-25 Recipes
+prem_ourecipe24.2 <-
+    recipe(TwoOrMore ~ odds_ft_home_team_win + odds_ft_away_team_win + odds_ft_draw + home_ppg + away_ppg +
+             Home.Team.Pre.Match.xG + Away.Team.Pre.Match.xG + average_goals_per_match_pre_match + average_corners_per_match_pre_match + average_cards_per_match_pre_match + HT_avgShots + AT_avgShots + HT_avgTarget + AT_avgTarget + HT_Possess + AT_Possess, data = prem_ou24.1) %>% step_normalize(all_numeric())
+prem_ourecipe24.3 <-
+    recipe(ThreeOrMore ~ odds_ft_home_team_win + odds_ft_away_team_win + odds_ft_draw + home_ppg + away_ppg +
+             Home.Team.Pre.Match.xG + Away.Team.Pre.Match.xG + average_goals_per_match_pre_match + average_corners_per_match_pre_match + average_cards_per_match_pre_match + HT_avgShots + AT_avgShots + HT_avgTarget + AT_avgTarget + HT_Possess + AT_Possess, data = prem_ou24.1) %>% step_normalize(all_numeric())
+prem_ourecipe24.4 <-
+    recipe(FourOrMore ~ odds_ft_home_team_win + odds_ft_away_team_win + odds_ft_draw + home_ppg + away_ppg +
+              average_goals_per_match_pre_match + average_corners_per_match_pre_match + average_cards_per_match_pre_match + HT_avgShots + AT_avgShots + HT_avgTarget + AT_avgTarget + HT_Possess + AT_Possess, data = prem_ou24.1) %>% step_normalize(all_numeric())
+prem_ourecipe24.3.2 <-
+    recipe(ThreeOrMore ~ Home.Team.Pre.Match.xG + Away.Team.Pre.Match.xG + average_goals_per_match_pre_match + average_corners_per_match_pre_match + average_cards_per_match_pre_match + HT_avgShots + AT_avgShots + HT_avgTarget + AT_avgTarget + HT_Possess + AT_Possess, data = prem_ou24.1) %>% step_normalize(all_numeric())
+```
+
+# Splitting Test and Train
+```{r}
+train_ou24.1 <- prem_ou24.1[1:271,]
+test_ou24.1 <- prem_ou24.1[272:380,]
+```
+
+# Defining the Model and Extracting Results
+```{r}
+# This is the model for Over/Under 3.5 Goals
+knn_model <-
+  nearest_neighbor(neighbors = tune("K")) %>% # Define K as a hyperparameter to tune
+  set_engine("kknn") %>% # Define the method as KNN
+  set_mode("classification")
+
+knn_workflow <-
+  workflow() %>% 
+  add_recipe(prem_ourecipe24.3) %>% 
+  add_model(knn_model)
+
+knn_grid <-
+  parameters(knn_workflow) %>% # Refer to tuning parameters in the method object
+  update(K = neighbors(c(1, 15))) %>% # Define a test range of K between 1 and 15
+  grid_regular(levels = 15) %>% # Capture all values of K between 1 and 15
+  filter(K %% 2 == 1)
+
+best_k <- tune_grid(
+  knn_workflow,
+  resamples = vfold_cv(train_ou24.1, v = 10),
+  grid = knn_grid,
+  metrics = metric_set(yardstick::accuracy) # Ensure accuracy is included in metrics
+) %>%
+  select_best(metric = "accuracy")  # Explicitly name the metric argument
+ #Select the K that leads to the highest accuracy for KNN
+
+knn_workflow_final <- finalize_workflow(knn_workflow, best_k) # Finalize workflow using best k
+fit_knn <- fit(knn_workflow_final, data = train_ou24.1)
+
+predicted_results_knn <-
+  predict(fit_knn, new_data = test_ou24.1, type = "prob") %>%
+  pluck(2)
+
+results_knn <-
+  predicted_results_knn %>%
+  bind_cols(test_ou24.1, predictedProbability = .) %>%
+  mutate(predictedClass = as.factor(ifelse(predictedProbability > 0.6, 1, 0)))
+
+results_knn %>% filter(Game.Week == c(28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38)) %>% select(home_team_name, away_team_name, predictedClass)
+```
+
