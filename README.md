@@ -9,7 +9,7 @@ To evaluate the practical application of the model, I simulated a simple betting
 
 ---
 
-## 🔧 Tech Stack
+## Tech Stack
 - **Language:** R  
 - **Libraries:** `tidyverse`, `dplyr`, `tidymodels`, `tidylog`, `yardstick`, `rsample`, `stringr`, `recipes`, `kknn`, `zoo`  
 - **Tools:** RStudio, Excel  
@@ -36,7 +36,7 @@ To evaluate the practical application of the model, I simulated a simple betting
 
 ---
 
-## 📊 Results
+## Results
 - **Best Model:** [KNN].  
 - **Accuracy:**
   - 67% Across the 2.5 and 3.5
